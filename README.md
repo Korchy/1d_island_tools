@@ -18,5 +18,11 @@ Blender version
 
 Version history
 -
+1.1.0
+- Added "Islands by Area"
+- Added "Islands by Edges"
+- Added threshold for getting islands operators
+- Added "Islands Decompose"
+
 1.0.0
 - Release
