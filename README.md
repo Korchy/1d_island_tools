@@ -18,6 +18,9 @@ Blender version
 
 Version history
 -
+1.2.0
+- Islands by "Area", "Edges", "Verts" merged to single tool
+
 1.1.0
 - Added "Islands by Area"
 - Added "Islands by Edges"

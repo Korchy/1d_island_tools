@@ -7,7 +7,7 @@
 import time
 import bmesh
 import bpy
-from bpy.props import FloatProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty
 from bpy.types import Operator, Panel, Scene
 from bpy.utils import register_class, unregister_class
 
@@ -15,7 +15,7 @@ bl_info = {
     "name": "Island Tools",
     "description": "Toolset for working with mesh islands",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 1, 0),
+    "version": (1, 2, 0),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Island Tools",
     "doc_url": "https://github.com/Korchy/1d_island_tools",
@@ -112,9 +112,14 @@ class IslandTools:
         print('Dec Select executed in : ' + str(time.time() - start_time) + ' sec.')
 
     @classmethod
-    def islands_by_verts(cls, context, threshold=5.0):
-        # Select islands with the close by threshold vertices amount as already selected islands
+    def select_islands_by(cls, context, op, op_mode='OR',
+                          mode_verts=False, threshold_verts=5.0,
+                          mode_edges=False, threshold_edges=5.0,
+                          mode_area=False, threshold_area=5.0):
+        # select islands by mode (Verts amount / Summary length of edges / Summary area of faces)
         #   threshold - %
+        #   op_mode -   OR - select if meets any of conditions (by verts/edges/faces)
+        #               AND - select if meets all of conditions (by verts/edges/faces)
         src_obj = context.active_object
         start_time = time.time()
         # current mode
@@ -126,97 +131,74 @@ class IslandTools:
         db, bm = cls.islands(obj=src_obj)
         # select islands
         vertices_amounts = set()
+        edges_length = set()
+        faces_areas = set()
+        selected_islands = 0
         # collect amount of vertices for fully selected islands
         for island in db:
-            # collect full selected islands by vertices amount
+            # for fully selected islands
             if all(vertex.select for vertex in island['vertices']):
+                selected_islands += 1
+                # collect vertices amount
                 vertices_amounts.add(len(island['vertices']))
+                # collect summary edges lengths
+                edges_length.add(sum([_edge.calc_length() for _edge in island['edges']]))
+                # collect summary faces area
+                faces_areas.add(sum([_face.calc_area() for _face in island['faces']]))
             # if island is partially selected - remove selection
             if any(not vertex.select for vertex in island['vertices']):
                 cls._deselect_island(island=island)
         # select islands with close amount of vertices
         for island in db:
-            min_amount = len(island['vertices']) * (1 - threshold / 100)
-            max_amount = len(island['vertices']) * (1 + threshold / 100)
-            if any(min_amount <= value <= max_amount for value in vertices_amounts):
-                cls._select_island(island=island)
-        # save changed data to mesh
-        bm.to_mesh(src_obj.data)
-        # return mode back
-        bpy.ops.object.mode_set(mode=mode)
-        print('Islands by Verts executed in : ' + str(time.time() - start_time) + ' sec.')
-
-    @classmethod
-    def islands_by_edges(cls, context, threshold=5.0):
-        # Select islands with close by threshold summary edges length as already selected islands
-        #   threshold - %
-        src_obj = context.active_object
-        start_time = time.time()
-        # current mode
-        mode = src_obj.mode
-        # switch to OBJECT mode
-        if src_obj.mode == 'EDIT':
-            bpy.ops.object.mode_set(mode='OBJECT')
-        # get islands db
-        db, bm = cls.islands(obj=src_obj)
-        # select islands
-        edges_length = set()
-        # collect summary edges length for fully selected islands
-        for island in db:
-            # collect summary edges length for full selected islands
-            if all(vertex.select for vertex in island['vertices']):
-                edges_length.add(sum([_edge.calc_length() for _edge in island['edges']]))
-            # if island is partially selected - remove selection
-            if any(not vertex.select for vertex in island['vertices']):
-                cls._deselect_island(island=island)
-        # select islands with close amount of summary edges length
-        for island in db:
+            # verts threshold
+            min_amount = len(island['vertices']) * (1 - threshold_verts / 100)
+            max_amount = len(island['vertices']) * (1 + threshold_verts / 100)
+            # edges threshold
             edges_len = sum([_edge.calc_length() for _edge in island['edges']])
-            min_len = edges_len * (1 - threshold / 100)
-            max_len = edges_len * (1 + threshold / 100)
-            if any(min_len <= value <= max_len for value in edges_length):
-                cls._select_island(island=island)
-        # save changed data to mesh
-        bm.to_mesh(src_obj.data)
-        # return mode back
-        bpy.ops.object.mode_set(mode=mode)
-        print('Islands by Edges executed in : ' + str(time.time() - start_time) + ' sec.')
-
-    @classmethod
-    def islands_by_area(cls, context, threshold=5.0):
-        # Select islands with close by threshold summary faces area as already selected islands
-        #   threshold - %
-        src_obj = context.active_object
-        start_time = time.time()
-        # current mode
-        mode = src_obj.mode
-        # switch to OBJECT mode
-        if src_obj.mode == 'EDIT':
-            bpy.ops.object.mode_set(mode='OBJECT')
-        # get islands db
-        db, bm = cls.islands(obj=src_obj)
-        # select islands
-        faces_areas = set()
-        # collect summary faces area for fully selected islands
-        for island in db:
-            # collect summary faces area for full selected islands
-            if all(vertex.select for vertex in island['vertices']):
-                faces_areas.add(sum([_face.calc_area() for _face in island['faces']]))
-            # if island is partially selected - remove selection
-            if any(not vertex.select for vertex in island['vertices']):
-                cls._deselect_island(island=island)
-        # select islands with close amount of summary edges length
-        for island in db:
+            min_len = edges_len * (1 - threshold_edges / 100)
+            max_len = edges_len * (1 + threshold_edges / 100)
+            # faces threshold
             faces_area = sum([_face.calc_area() for _face in island['faces']])
-            min_area = faces_area * (1 - threshold / 100)
-            max_area = faces_area * (1 + threshold / 100)
-            if any(min_area <= value <= max_area for value in faces_areas):
-                cls._select_island(island=island)
+            min_area = faces_area * (1 - threshold_area / 100)
+            max_area = faces_area * (1 + threshold_area / 100)
+            # make selection
+            print('op_ode', op_mode)
+            if op_mode == 'OR':
+                if (mode_verts and any(min_amount <= value <= max_amount for value in vertices_amounts)) \
+                        or (mode_edges and any(min_len <= value <= max_len for value in edges_length)) \
+                        or (mode_area and any(min_area <= value <= max_area for value in faces_areas)):
+                    cls._select_island(island=island)
+            elif op_mode == 'AND':
+                # combine all possible conditions by verts/edges/area
+                conditions = []
+                if mode_verts:
+                    conditions.append(any(min_amount <= value <= max_amount for value in vertices_amounts))
+                if mode_edges:
+                    conditions.append(any(min_len <= value <= max_len for value in edges_length))
+                if mode_area:
+                    conditions.append(any(min_area <= value <= max_area for value in faces_areas))
+                print('conditions', conditions)
+                if conditions and all(conditions):
+                    cls._select_island(island=island)
         # save changed data to mesh
         bm.to_mesh(src_obj.data)
         # return mode back
         bpy.ops.object.mode_set(mode=mode)
-        print('Islands by Area executed in : ' + str(time.time() - start_time) + ' sec.')
+        # report
+        if selected_islands == 1:
+            # if there is only one selected island - show its values with threshold
+            sum_edges_length = sum([_edge.calc_length() for _edge in db[0]['edges']])
+            sum_faces_area = sum([_face.calc_area() for _face in db[0]['faces']])
+            op.report(
+                type={'INFO'},
+                message='Values: v=' \
+                        + str(len(db[0]["vertices"])) + '-' + str(len(db[0]["vertices"]) * threshold_verts / 100) \
+                        + ' | e=' \
+                        + str(sum_edges_length) + '-' + str(sum_edges_length * threshold_edges / 100) \
+                        + ' | f=' \
+                        + str(sum_faces_area) + '-' + str(sum_faces_area * threshold_area / 100)
+                )
+        print('Islands by Comb executed in : ' + str(time.time() - start_time) + ' sec.')
 
     @classmethod
     def islands_decompose(cls, context, offset=0.5):
@@ -270,8 +252,7 @@ class IslandTools:
         # Dec Select
         layout.operator(
             operator='island_tools.dec_select',
-            icon='ZOOM_SELECTED'
-        )
+            icon='ZOOM_SELECTED'        )
         # Islands decompose
         col = layout.column(align=True)
         op = col.operator(
@@ -287,44 +268,53 @@ class IslandTools:
         )
         # select islands
         layout.label(text='Select Islands By:')
+        op = layout.operator(
+            operator='island_tools.islands_by',
+            icon='GROUP_VERTEX',
+            text='Filter Islands'
+        )
+        op.op_mode = context.scene.island_tools_prop_islands_by_op_mode
+        op.mode_verts = context.scene.island_tools_prop_islands_by_mode_verts
+        op.threshold_verts = context.scene.island_tools_prop_islands_by_threshold_verts
+        op.mode_edges = context.scene.island_tools_prop_islands_by_mode_edges
+        op.threshold_edges = context.scene.island_tools_prop_islands_by_threshold_edges
+        op.mode_area = context.scene.island_tools_prop_islands_by_mode_area
+        op.threshold_area = context.scene.island_tools_prop_islands_by_threshold_area
+        row = layout.row(align=True)
+        row.prop(
+            data=context.scene,
+            property='island_tools_prop_islands_by_op_mode',
+            expand=True
+        )
         col = layout.column(align=True)
-        # Select islands by vertices
         row = col.row(align=True)
-        op = row.operator(
-            operator='island_tools.islands_by_verts',
-            icon='UV_VERTEXSEL',
-            text='Verts'
-        )
-        op.threshold = context.scene.island_tools_prop_islands_by_verts_threshold
         row.prop(
             data=context.scene,
-            property='island_tools_prop_islands_by_verts_threshold',
+            property='island_tools_prop_islands_by_mode_verts'
+        )
+        row.prop(
+            data=context.scene,
+            property='island_tools_prop_islands_by_threshold_verts',
             text='% Threshold'
         )
-        # Select islands by edges
         row = col.row(align=True)
-        op = row.operator(
-            operator='island_tools.islands_by_edges',
-            icon='UV_EDGESEL',
-            text='Edges'
-        )
-        op.threshold = context.scene.island_tools_prop_islands_by_edges_threshold
         row.prop(
             data=context.scene,
-            property='island_tools_prop_islands_by_edges_threshold',
+            property='island_tools_prop_islands_by_mode_edges'
+        )
+        row.prop(
+            data=context.scene,
+            property='island_tools_prop_islands_by_threshold_edges',
             text='% Threshold'
         )
-        # Select islands by area
         row = col.row(align=True)
-        op = row.operator(
-            operator='island_tools.islands_by_area',
-            icon='UV_FACESEL',
-            text='Area'
-        )
-        op.threshold = context.scene.island_tools_prop_islands_by_area_threshold
         row.prop(
             data=context.scene,
-            property='island_tools_prop_islands_by_area_threshold',
+            property='island_tools_prop_islands_by_mode_area'
+        )
+        row.prop(
+            data=context.scene,
+            property='island_tools_prop_islands_by_threshold_area',
             text='% Threshold'
         )
 
@@ -347,65 +337,62 @@ class IslandTools_OT_dec_select(Operator):
     def poll(cls, context):
         return context.active_object and context.active_object.mode == 'EDIT'
 
-class IslandTools_OT_islands_by_verts(Operator):
-    bl_idname = 'island_tools.islands_by_verts'
-    bl_label = 'Islands By Verts'
-    bl_description = 'Select islands with the same amount of vertices as already selected'
+class IslandTools_OT_islands_by(Operator):
+    bl_idname = 'island_tools.islands_by'
+    bl_label = 'Select Islands By'
+    bl_description = 'Select islands by specified mode'
     bl_options = {'REGISTER', 'UNDO'}
 
-    threshold = FloatProperty(
+    op_mode = EnumProperty(
+        name='Op Mode',
+        items=[
+            ('OR', 'OR', 'OR'),
+            ('AND', 'AND', 'AND')
+        ],
+        default='OR'
+    )
+
+    mode_verts = BoolProperty(
+        name='Verts',
+        default=False
+    )
+
+    threshold_verts = FloatProperty(
+        name='Threshold %',
+        default=0.0
+    )
+
+    mode_edges = BoolProperty(
+        name='Edges',
+        default=False
+    )
+
+    threshold_edges = FloatProperty(
+        name='Threshold %',
+        default=5.0
+    )
+
+    mode_area = BoolProperty(
+        name='Area',
+        default=False
+    )
+
+    threshold_area = FloatProperty(
         name='Threshold %',
         default=5.0
     )
 
     def execute(self, context):
-        IslandTools.islands_by_verts(
+        IslandTools.select_islands_by(
             context=context,
-            threshold=self.threshold
-        )
-        return {'FINISHED'}
-
-    @classmethod
-    def poll(cls, context):
-        return context.active_object and context.active_object.mode == 'EDIT'
-
-class IslandTools_OT_islands_by_edges(Operator):
-    bl_idname = 'island_tools.islands_by_edges'
-    bl_label = 'Islands By Edges'
-    bl_description = 'Select islands with the same summary length of edges as already selected'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    threshold = FloatProperty(
-        name='Threshold %',
-        default=5.0
-    )
-
-    def execute(self, context):
-        IslandTools.islands_by_edges(
-            context=context,
-            threshold=self.threshold
-        )
-        return {'FINISHED'}
-
-    @classmethod
-    def poll(cls, context):
-        return context.active_object and context.active_object.mode == 'EDIT'
-
-class IslandTools_OT_islands_by_area(Operator):
-    bl_idname = 'island_tools.islands_by_area'
-    bl_label = 'Islands By Area'
-    bl_description = 'Select islands with the same summary area of faces as already selected'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    threshold = FloatProperty(
-        name='Threshold %',
-        default=5.0
-    )
-
-    def execute(self, context):
-        IslandTools.islands_by_area(
-            context=context,
-            threshold=self.threshold
+            op=self,
+            op_mode=self.op_mode,
+            mode_verts=self.mode_verts,
+            mode_edges=self.mode_edges,
+            mode_area=self.mode_area,
+            threshold_verts=self.threshold_verts,
+            threshold_edges=self.threshold_edges,
+            threshold_area=self.threshold_area
         )
         return {'FINISHED'}
 
@@ -454,29 +441,47 @@ class IslandTools_PT_panel(Panel):
 # REGISTER
 
 def register(ui=True):
-    Scene.island_tools_prop_islands_by_verts_threshold = FloatProperty(
-        name='Islands by Verts Threshold',
-        default=5.0,
-        min=0.0001
+    Scene.island_tools_prop_islands_by_op_mode = EnumProperty(
+        name='Op Mode',
+        items=[
+            ('OR', 'OR', 'OR'),
+            ('AND', 'AND', 'AND')
+        ],
+        default='AND'
     )
-    Scene.island_tools_prop_islands_by_edges_threshold = FloatProperty(
+    Scene.island_tools_prop_islands_by_mode_verts = BoolProperty(
+        name='Verts',
+        default=False
+    )
+    Scene.island_tools_prop_islands_by_mode_edges = BoolProperty(
+        name='Edges',
+        default=False
+    )
+    Scene.island_tools_prop_islands_by_mode_area = BoolProperty(
+        name='Area',
+        default=False
+    )
+    Scene.island_tools_prop_islands_by_threshold_verts = FloatProperty(
+        name='Islands by Verts Threshold',
+        default=0.0,
+        min=0.0
+    )
+    Scene.island_tools_prop_islands_by_threshold_edges = FloatProperty(
         name='Islands by Edges Threshold',
         default=5.0,
-        min=0.0001
+        min=0.0
     )
-    Scene.island_tools_prop_islands_by_area_threshold = FloatProperty(
+    Scene.island_tools_prop_islands_by_threshold_area = FloatProperty(
         name='Islands by Area Threshold',
         default=5.0,
-        min=0.0001
+        min=0.0
     )
     Scene.island_tools_prop_decompose_offset = FloatProperty(
         name='Decompose Offset',
         default=0.5
     )
     register_class(IslandTools_OT_dec_select)
-    register_class(IslandTools_OT_islands_by_verts)
-    register_class(IslandTools_OT_islands_by_edges)
-    register_class(IslandTools_OT_islands_by_area)
+    register_class(IslandTools_OT_islands_by)
     register_class(IslandTools_OT_decompose)
     if ui:
         register_class(IslandTools_PT_panel)
@@ -486,14 +491,16 @@ def unregister(ui=True):
     if ui:
         unregister_class(IslandTools_PT_panel)
     unregister_class(IslandTools_OT_decompose)
-    unregister_class(IslandTools_OT_islands_by_area)
-    unregister_class(IslandTools_OT_islands_by_edges)
-    unregister_class(IslandTools_OT_islands_by_verts)
+    unregister_class(IslandTools_OT_islands_by)
     unregister_class(IslandTools_OT_dec_select)
     del Scene.island_tools_prop_decompose_offset
-    del Scene.island_tools_prop_islands_by_area_threshold
-    del Scene.island_tools_prop_islands_by_edges_threshold
-    del Scene.island_tools_prop_islands_by_verts_threshold
+    del Scene.island_tools_prop_islands_by_threshold_area
+    del Scene.island_tools_prop_islands_by_threshold_edges
+    del Scene.island_tools_prop_islands_by_threshold_verts
+    del Scene.island_tools_prop_islands_by_mode_area
+    del Scene.island_tools_prop_islands_by_mode_edges
+    del Scene.island_tools_prop_islands_by_mode_verts
+    del Scene.island_tools_prop_islands_by_op_mode
 
 
 if __name__ == "__main__":
