@@ -4,6 +4,7 @@
 # GitHub
 #    https://github.com/Korchy/1d_island_tools
 
+import sys
 import time
 import bmesh
 import bpy
@@ -15,7 +16,7 @@ bl_info = {
     "name": "Island Tools",
     "description": "Toolset for working with mesh islands",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 2, 0),
+    "version": (1, 3, 0),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Island Tools",
     "doc_url": "https://github.com/Korchy/1d_island_tools",
@@ -112,7 +113,7 @@ class IslandTools:
         print('Dec Select executed in : ' + str(time.time() - start_time) + ' sec.')
 
     @classmethod
-    def select_islands_by(cls, context, op, op_mode='OR',
+    def select_islands_by(cls, context, op, op_mode='OR', compare_mode='EQ',
                           mode_verts=False, threshold_verts=5.0,
                           mode_edges=False, threshold_edges=5.0,
                           mode_area=False, threshold_area=5.0):
@@ -120,6 +121,9 @@ class IslandTools:
         #   threshold - %
         #   op_mode -   OR - select if meets any of conditions (by verts/edges/faces)
         #               AND - select if meets all of conditions (by verts/edges/faces)
+        #   compare_mode -  EQ (=) - equal with threshold
+        #                   LE (<=) - less than or equal with threshold
+        #                   GE (>=) - grater than
         src_obj = context.active_object
         start_time = time.time()
         # current mode
@@ -133,12 +137,12 @@ class IslandTools:
         vertices_amounts = set()
         edges_length = set()
         faces_areas = set()
-        selected_islands = 0
+        selected_islands = []   # selected islands indices in db
         # collect amount of vertices for fully selected islands
-        for island in db:
+        for _i, island in enumerate(db):
             # for fully selected islands
             if all(vertex.select for vertex in island['vertices']):
-                selected_islands += 1
+                selected_islands.append(_i)
                 # collect vertices amount
                 vertices_amounts.add(len(island['vertices']))
                 # collect summary edges lengths
@@ -151,18 +155,38 @@ class IslandTools:
         # select islands with close amount of vertices
         for island in db:
             # verts threshold
-            min_amount = len(island['vertices']) * (1 - threshold_verts / 100)
-            max_amount = len(island['vertices']) * (1 + threshold_verts / 100)
+            if compare_mode == 'LE':
+                min_amount = len(island['vertices']) * (1 - threshold_verts / 100)
+                max_amount = sys.maxsize
+            elif compare_mode == 'GE':
+                min_amount = 0.0
+                max_amount = len(island['vertices']) * (1 + threshold_verts / 100)
+            else:   # EQ
+                min_amount = len(island['vertices']) * (1 - threshold_verts / 100)
+                max_amount = len(island['vertices']) * (1 + threshold_verts / 100)
             # edges threshold
             edges_len = sum([_edge.calc_length() for _edge in island['edges']])
-            min_len = edges_len * (1 - threshold_edges / 100)
-            max_len = edges_len * (1 + threshold_edges / 100)
+            if compare_mode == 'LE':
+                min_len = edges_len * (1 - threshold_edges / 100)
+                max_len = sys.maxsize
+            elif compare_mode == 'GE':
+                min_len = 0.0
+                max_len = edges_len * (1 + threshold_edges / 100)
+            else:  # EQ
+                min_len = edges_len * (1 - threshold_edges / 100)
+                max_len = edges_len * (1 + threshold_edges / 100)
             # faces threshold
             faces_area = sum([_face.calc_area() for _face in island['faces']])
-            min_area = faces_area * (1 - threshold_area / 100)
-            max_area = faces_area * (1 + threshold_area / 100)
+            if compare_mode == 'LE':
+                min_area = faces_area * (1 - threshold_area / 100)
+                max_area = sys.maxsize
+            elif compare_mode == 'GE':
+                min_area = 0.0
+                max_area = faces_area * (1 + threshold_area / 100)
+            else:  # EQ
+                min_area = faces_area * (1 - threshold_area / 100)
+                max_area = faces_area * (1 + threshold_area / 100)
             # make selection
-            print('op_ode', op_mode)
             if op_mode == 'OR':
                 if (mode_verts and any(min_amount <= value <= max_amount for value in vertices_amounts)) \
                         or (mode_edges and any(min_len <= value <= max_len for value in edges_length)) \
@@ -177,7 +201,6 @@ class IslandTools:
                     conditions.append(any(min_len <= value <= max_len for value in edges_length))
                 if mode_area:
                     conditions.append(any(min_area <= value <= max_area for value in faces_areas))
-                print('conditions', conditions)
                 if conditions and all(conditions):
                     cls._select_island(island=island)
         # save changed data to mesh
@@ -185,18 +208,22 @@ class IslandTools:
         # return mode back
         bpy.ops.object.mode_set(mode=mode)
         # report
-        if selected_islands == 1:
+        if len(selected_islands) == 1:
+            selected_island_idx = selected_islands[0]
             # if there is only one selected island - show its values with threshold
-            sum_edges_length = sum([_edge.calc_length() for _edge in db[0]['edges']])
-            sum_faces_area = sum([_face.calc_area() for _face in db[0]['faces']])
+            sum_edges_length = sum([_edge.calc_length() for _edge in db[selected_island_idx]['edges']])
+            sum_faces_area = sum([_face.calc_area() for _face in db[selected_island_idx]['faces']])
             op.report(
                 type={'INFO'},
                 message='Values: v=' \
-                        + str(len(db[0]["vertices"])) + '-' + str(len(db[0]["vertices"]) * threshold_verts / 100) \
+                        + str(len(db[selected_island_idx]["vertices"])) \
+                        + '-' + str(round(len(db[selected_island_idx]["vertices"]) * threshold_verts / 100, 3)) \
                         + ' | e=' \
-                        + str(sum_edges_length) + '-' + str(sum_edges_length * threshold_edges / 100) \
+                        + str(round(sum_edges_length, 3)) \
+                        + '-' + str(round(sum_edges_length * threshold_edges / 100, 3)) \
                         + ' | f=' \
-                        + str(sum_faces_area) + '-' + str(sum_faces_area * threshold_area / 100)
+                        + str(round(sum_faces_area, 3)) \
+                        + '-' + str(round(sum_faces_area * threshold_area / 100, 3))
                 )
         print('Islands by Comb executed in : ' + str(time.time() - start_time) + ' sec.')
 
@@ -274,6 +301,7 @@ class IslandTools:
             text='Filter Islands'
         )
         op.op_mode = context.scene.island_tools_prop_islands_by_op_mode
+        op.compare_mode = context.scene.island_tools_prop_islands_by_compare_mode
         op.mode_verts = context.scene.island_tools_prop_islands_by_mode_verts
         op.threshold_verts = context.scene.island_tools_prop_islands_by_threshold_verts
         op.mode_edges = context.scene.island_tools_prop_islands_by_mode_edges
@@ -284,6 +312,12 @@ class IslandTools:
         row.prop(
             data=context.scene,
             property='island_tools_prop_islands_by_op_mode',
+            expand=True
+        )
+        row = layout.row(align=True)
+        row.prop(
+            data=context.scene,
+            property='island_tools_prop_islands_by_compare_mode',
             expand=True
         )
         col = layout.column(align=True)
@@ -352,6 +386,16 @@ class IslandTools_OT_islands_by(Operator):
         default='OR'
     )
 
+    compare_mode = EnumProperty(
+        name='Compare Mode',
+        items=[
+            ('EQ', '==', '=='),
+            ('LE', '<=', '<='),
+            ('GE', '>=', '>=')
+        ],
+        default='EQ'
+    )
+
     mode_verts = BoolProperty(
         name='Verts',
         default=False
@@ -387,6 +431,7 @@ class IslandTools_OT_islands_by(Operator):
             context=context,
             op=self,
             op_mode=self.op_mode,
+            compare_mode=self.compare_mode,
             mode_verts=self.mode_verts,
             mode_edges=self.mode_edges,
             mode_area=self.mode_area,
@@ -449,6 +494,15 @@ def register(ui=True):
         ],
         default='AND'
     )
+    Scene.island_tools_prop_islands_by_compare_mode = EnumProperty(
+        name='Compare Mode',
+        items=[
+            ('EQ', '==', '=='),
+            ('LE', '<=', '<='),
+            ('GE', '>=', '>=')
+        ],
+        default='EQ'
+    )
     Scene.island_tools_prop_islands_by_mode_verts = BoolProperty(
         name='Verts',
         default=False
@@ -500,6 +554,7 @@ def unregister(ui=True):
     del Scene.island_tools_prop_islands_by_mode_area
     del Scene.island_tools_prop_islands_by_mode_edges
     del Scene.island_tools_prop_islands_by_mode_verts
+    del Scene.island_tools_prop_islands_by_compare_mode
     del Scene.island_tools_prop_islands_by_op_mode
 
 

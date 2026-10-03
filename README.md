@@ -18,6 +18,9 @@ Blender version
 
 Version history
 -
+1.3.0
+- Added '==', '<=', '>=' selection to Islands By tool
+
 1.2.0
 - Islands by "Area", "Edges", "Verts" merged to single tool
 
