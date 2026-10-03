@@ -18,6 +18,9 @@ Blender version
 
 Version history
 -
+1.3.1
+- Modified '==', '<=', '>=' conditions comparing algorithm
+
 1.3.0
 - Added '==', '<=', '>=' selection to Islands By tool
 

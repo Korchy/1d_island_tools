@@ -16,7 +16,7 @@ bl_info = {
     "name": "Island Tools",
     "description": "Toolset for working with mesh islands",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 3, 0),
+    "version": (1, 3, 1),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Island Tools",
     "doc_url": "https://github.com/Korchy/1d_island_tools",
@@ -154,53 +154,58 @@ class IslandTools:
                 cls._deselect_island(island=island)
         # select islands with close amount of vertices
         for island in db:
-            # verts threshold
-            if compare_mode == 'LE':
-                min_amount = len(island['vertices']) * (1 - threshold_verts / 100)
-                max_amount = sys.maxsize
-            elif compare_mode == 'GE':
-                min_amount = 0.0
-                max_amount = len(island['vertices']) * (1 + threshold_verts / 100)
-            else:   # EQ
-                min_amount = len(island['vertices']) * (1 - threshold_verts / 100)
-                max_amount = len(island['vertices']) * (1 + threshold_verts / 100)
-            # edges threshold
+            # compare conditions
+            verts_amount = len(island['vertices'])
             edges_len = sum([_edge.calc_length() for _edge in island['edges']])
-            if compare_mode == 'LE':
-                min_len = edges_len * (1 - threshold_edges / 100)
-                max_len = sys.maxsize
-            elif compare_mode == 'GE':
-                min_len = 0.0
-                max_len = edges_len * (1 + threshold_edges / 100)
-            else:  # EQ
-                min_len = edges_len * (1 - threshold_edges / 100)
-                max_len = edges_len * (1 + threshold_edges / 100)
-            # faces threshold
             faces_area = sum([_face.calc_area() for _face in island['faces']])
-            if compare_mode == 'LE':
-                min_area = faces_area * (1 - threshold_area / 100)
-                max_area = sys.maxsize
-            elif compare_mode == 'GE':
-                min_area = 0.0
-                max_area = faces_area * (1 + threshold_area / 100)
-            else:  # EQ
-                min_area = faces_area * (1 - threshold_area / 100)
-                max_area = faces_area * (1 + threshold_area / 100)
             # make selection
             if op_mode == 'OR':
-                if (mode_verts and any(min_amount <= value <= max_amount for value in vertices_amounts)) \
-                        or (mode_edges and any(min_len <= value <= max_len for value in edges_length)) \
-                        or (mode_area and any(min_area <= value <= max_area for value in faces_areas)):
+                if (mode_verts and any(
+                            cls._value_threshold(value, threshold_verts, 'MIN', compare_mode)
+                            <= verts_amount <=
+                            cls._value_threshold(value, threshold_verts, 'MAX', compare_mode)
+                                for value in vertices_amounts)) \
+                        or (mode_edges and any(
+                            cls._value_threshold(value, threshold_edges, 'MIN', compare_mode)
+                            <= edges_len <=
+                            cls._value_threshold(value, threshold_edges, 'MAX', compare_mode)
+                                for value in edges_length)) \
+                        or (mode_area and any(
+                            cls._value_threshold(value, threshold_area, 'MIN', compare_mode)
+                            <= faces_area <=
+                            cls._value_threshold(value, threshold_area, 'MAX', compare_mode)
+                                for value in faces_areas)):
                     cls._select_island(island=island)
             elif op_mode == 'AND':
                 # combine all possible conditions by verts/edges/area
                 conditions = []
                 if mode_verts:
-                    conditions.append(any(min_amount <= value <= max_amount for value in vertices_amounts))
+                    conditions.append(
+                        any(
+                            cls._value_threshold(value, threshold_verts, 'MIN', compare_mode)
+                            <= verts_amount <=
+                            cls._value_threshold(value, threshold_verts, 'MAX', compare_mode)
+                                for value in vertices_amounts
+                        )
+                    )
                 if mode_edges:
-                    conditions.append(any(min_len <= value <= max_len for value in edges_length))
+                    conditions.append(
+                        any(
+                            cls._value_threshold(value, threshold_edges, 'MIN', compare_mode)
+                            <= edges_len <=
+                            cls._value_threshold(value, threshold_edges, 'MAX', compare_mode)
+                                for value in edges_length
+                        )
+                    )
                 if mode_area:
-                    conditions.append(any(min_area <= value <= max_area for value in faces_areas))
+                    conditions.append(
+                        any(
+                            cls._value_threshold(value, threshold_area, 'MIN', compare_mode)
+                            <= faces_area <=
+                            cls._value_threshold(value, threshold_area, 'MAX', compare_mode)
+                                for value in faces_areas
+                        )
+                    )
                 if conditions and all(conditions):
                     cls._select_island(island=island)
         # save changed data to mesh
@@ -226,6 +231,29 @@ class IslandTools:
                         + '-' + str(round(sum_faces_area * threshold_area / 100, 3))
                 )
         print('Islands by Comb executed in : ' + str(time.time() - start_time) + ' sec.')
+
+    @staticmethod
+    def _value_threshold(value, threshold, value_type='NONE', compare_mode='EQ'):
+        # support function to get MIN/MAX value with threshold by compare operation mode
+        #   value_type = MIN | MAX | NONE
+        #   compare_mode -  EQ (==) - equal with threshold
+        #                   LE (<=) - less than or equal with threshold
+        #                   GE (>=) - grater than with threshold
+        if compare_mode == 'LE':
+            min_value = 0.0
+            max_value = value * (1 + threshold / 100)
+        elif compare_mode == 'GE':
+            min_value = value * (1 - threshold / 100)
+            max_value = sys.maxsize
+        else:  # EQ
+            min_value = value * (1 - threshold / 100)
+            max_value = value * (1 + threshold / 100)
+        if value_type == 'MIN':
+            return min_value
+        elif value_type == 'MAX':
+            return max_value
+        else:   # 'NONE'
+            return value
 
     @classmethod
     def islands_decompose(cls, context, offset=0.5):
