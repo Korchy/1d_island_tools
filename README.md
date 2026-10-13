@@ -18,6 +18,9 @@ Blender version
 
 Version history
 -
+1.3.2
+- "Select Islands By" renamed to "Islands By"
+
 1.3.1
 - Modified '==', '<=', '>=' conditions comparing algorithm
 

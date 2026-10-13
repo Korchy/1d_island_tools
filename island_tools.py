@@ -16,7 +16,7 @@ bl_info = {
     "name": "Island Tools",
     "description": "Toolset for working with mesh islands",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 3, 1),
+    "version": (1, 3, 2),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Island Tools",
     "doc_url": "https://github.com/Korchy/1d_island_tools",
@@ -322,7 +322,7 @@ class IslandTools:
             text='Offset'
         )
         # select islands
-        layout.label(text='Select Islands By:')
+        layout.label(text='Islands By:')
         op = layout.operator(
             operator='island_tools.islands_by',
             icon='GROUP_VERTEX',
@@ -401,7 +401,7 @@ class IslandTools_OT_dec_select(Operator):
 
 class IslandTools_OT_islands_by(Operator):
     bl_idname = 'island_tools.islands_by'
-    bl_label = 'Select Islands By'
+    bl_label = 'Islands By'
     bl_description = 'Select islands by specified mode'
     bl_options = {'REGISTER', 'UNDO'}
 
