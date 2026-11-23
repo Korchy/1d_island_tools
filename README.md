@@ -18,6 +18,10 @@ Blender version
 
 Version history
 -
+1.4.0
+- Added option for ignoring hidden geometry
+- Added "Merge inside Islands" tool
+
 1.3.2
 - "Select Islands By" renamed to "Islands By"
 

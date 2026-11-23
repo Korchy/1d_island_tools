@@ -16,7 +16,7 @@ bl_info = {
     "name": "Island Tools",
     "description": "Toolset for working with mesh islands",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 3, 2),
+    "version": (1, 4, 0),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Island Tools",
     "doc_url": "https://github.com/Korchy/1d_island_tools",
@@ -30,10 +30,10 @@ bl_info = {
 class IslandTools:
 
     @staticmethod
-    def islands(obj):
+    def islands(obj, ignore_hidden=False, only_selected=False):
         # get islands for object
         #   list of islands. Each island - one separated part of the mesh
-        #   islands = [{'vertices': [GMVert, ...], 'edges': [BMEdge, ...], 'faces': [BMFace, ...]}, ...]
+        #   islands = [{'vertices': [BMVert, ...], 'edges': [BMEdge, ...], 'faces': [BMFace, ...]}, ...]
         islands = []
         start_time = time.time()
         # current mode
@@ -47,8 +47,18 @@ class IslandTools:
         # bm.verts.ensure_lookup_table()
         # create islands db from BMesh object
         checked = set() # already checked vertices
-        # check all vertices of the mesh
-        for vert in bm.verts:
+        # check all vertices of the mesh / only visible if ignore hidden / only selected if filtered by selection
+        def _filter_cond(element):
+            # apply filter conditions
+            if ignore_hidden and element.hide:
+                return False
+            if only_selected and not element.select:
+                return False
+            return True
+        # processing_vertices = [_vert for _vert in bm.verts if _vert.hide == False] if ignore_hidden else bm.verts
+        processing_vertices = [_vert for _vert in bm.verts if _filter_cond(_vert)] \
+            if (ignore_hidden or only_selected) else bm.verts
+        for vert in processing_vertices:
             if vert in checked:
                 continue
             checked.add(vert)
@@ -62,13 +72,17 @@ class IslandTools:
                 current_vert = checking_vertices.pop()
                 vertices.append(current_vert)
                 # check vertices connected with current by edges
-                for edge in current_vert.link_edges:
+                processing_edges = [_edge for _edge in current_vert.link_edges if _filter_cond(_edge)] \
+                    if (ignore_hidden or only_selected) else current_vert.link_edges
+                for edge in processing_edges:
                     edges.add(edge)
                     other = edge.other_vert(current_vert)
-                    if other not in checked:
+                    if (other not in checked) and _filter_cond(other):
                         checked.add(other)
                         checking_vertices.append(other)
-                    for face in edge.link_faces:
+                    processing_faces = [_face for _face in edge.link_faces if _filter_cond(_face)] \
+                        if (ignore_hidden or only_selected) else edge.link_faces
+                    for face in processing_faces:
                         faces.add(face)
             # append new island to the islands db
             islands.append(
@@ -80,6 +94,14 @@ class IslandTools:
             )
         print('Islands DB created in : ' + str(time.time() - start_time) \
               + ' sec, got ' + str(len(islands)) + ' islands.')
+        # for i, island in enumerate(islands):
+        #     print('island', i)
+        #     for v in island['vertices']:
+        #         print(v)
+        #     for e in island['edges']:
+        #         print(e)
+        #     for f in island['faces']:
+        #         print(f)
         # return mode back
         bpy.ops.object.mode_set(mode=mode)
         return islands, bm
@@ -95,7 +117,11 @@ class IslandTools:
         if src_obj.mode == 'EDIT':
             bpy.ops.object.mode_set(mode='OBJECT')
         # get islands db
-        db, bm = cls.islands(obj=src_obj)
+        db, bm = cls.islands(
+            obj=src_obj,
+            ignore_hidden=context.scene.island_tools_prop_ignore_hidden,
+            only_selected=context.scene.island_tools_prop_only_selected
+        )
         # remove selection from partially selected islands
         for island in db:
             # if island is partially selected - remove selection
@@ -132,7 +158,11 @@ class IslandTools:
         if src_obj.mode == 'EDIT':
             bpy.ops.object.mode_set(mode='OBJECT')
         # get islands db
-        db, bm = cls.islands(obj=src_obj)
+        db, bm = cls.islands(
+            obj=src_obj,
+            ignore_hidden=context.scene.island_tools_prop_ignore_hidden,
+            only_selected=context.scene.island_tools_prop_only_selected
+        )
         # select islands
         vertices_amounts = set()
         edges_length = set()
@@ -220,9 +250,10 @@ class IslandTools:
             sum_faces_area = sum([_face.calc_area() for _face in db[selected_island_idx]['faces']])
             op.report(
                 type={'INFO'},
-                message='Values: v=' \
-                        + str(len(db[selected_island_idx]["vertices"])) \
-                        + '-' + str(round(len(db[selected_island_idx]["vertices"]) * threshold_verts / 100, 3)) \
+                message='( ' + str(len(db)) + ' )' \
+                        + ' Values: v=' \
+                        + str(len(db[selected_island_idx]['vertices'])) \
+                        + '-' + str(round(len(db[selected_island_idx]['vertices']) * threshold_verts / 100, 3)) \
                         + ' | e=' \
                         + str(round(sum_edges_length, 3)) \
                         + '-' + str(round(sum_edges_length * threshold_edges / 100, 3)) \
@@ -231,6 +262,39 @@ class IslandTools:
                         + '-' + str(round(sum_faces_area * threshold_area / 100, 3))
                 )
         print('Islands by Comb executed in : ' + str(time.time() - start_time) + ' sec.')
+
+    @classmethod
+    def merge_inside_islands(cls, op, context, distance=0.02):
+        # merge by distance inside each island
+        src_obj = context.active_object
+        start_time = time.time()
+        # switch to OBJECT mode
+        mode = src_obj.mode
+        if src_obj.mode == 'EDIT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        # get islands db
+        db, bm = cls.islands(
+            obj=src_obj,
+            ignore_hidden=context.scene.island_tools_prop_ignore_hidden,
+            # only_selected=context.scene.island_tools_prop_only_selected
+            only_selected=True  # Paul - always True for this operation
+        )
+        vertices_before = len(bm.verts)
+        # merge by distance inside each island
+        for island in db:
+            # merge
+            bmesh.ops.remove_doubles(bm, verts=island['vertices'], dist=distance)
+        vertices_after = len(bm.verts)
+        # save changed data to mesh
+        bm.to_mesh(src_obj.data)
+        # return mode back
+        bpy.ops.object.mode_set(mode=mode)
+        # print to INFO
+        op.report(
+            type={'INFO'},
+            message='Removed ' + str(vertices_before - vertices_after) + ' vertices; '\
+                    + '(executed in : ' + str(round(time.time() - start_time, 4)) + ' sec.)'
+        )
 
     @staticmethod
     def _value_threshold(value, threshold, value_type='NONE', compare_mode='EQ'):
@@ -264,7 +328,11 @@ class IslandTools:
         if src_obj.mode == 'EDIT':
             bpy.ops.object.mode_set(mode='OBJECT')
         # get islands db
-        db, bm = cls.islands(obj=src_obj)
+        db, bm = cls.islands(
+            obj=src_obj,
+            ignore_hidden=context.scene.island_tools_prop_ignore_hidden,
+            only_selected=context.scene.island_tools_prop_only_selected
+        )
         # decompose selected islands
         shift_step = 0
         for island in db:
@@ -304,6 +372,30 @@ class IslandTools:
     @staticmethod
     def ui(layout, context):
         # ui panel
+        box = layout.box()
+        box.prop(
+            data=context.scene,
+            property='island_tools_prop_ignore_hidden',
+            text='Ignore hidden'
+        )
+        # Paul - remove from changeable parameters, just use defaults in methods
+        # box.prop(
+        #     data=context.scene,
+        #     property='island_tools_prop_only_selected'
+        # )
+        layout.separator()
+        # Merge inside Islands by distance
+        box = layout.box()
+        op = box.operator(
+            operator='island_tools.merge_inside_islands',
+            icon='AUTOMERGE_OFF',
+            text='Merge by Distance'
+        )
+        op.distance = context.scene.island_tools_prop_merge_distance
+        box.prop(
+            data=context.scene,
+            property='island_tools_prop_merge_distance'
+        )
         # Dec Select
         layout.operator(
             operator='island_tools.dec_select',
@@ -322,8 +414,9 @@ class IslandTools:
             text='Offset'
         )
         # select islands
-        layout.label(text='Islands By:')
-        op = layout.operator(
+        box = layout.box()
+        box.label(text='Islands By:')
+        op = box.operator(
             operator='island_tools.islands_by',
             icon='GROUP_VERTEX',
             text='Filter Islands'
@@ -336,19 +429,19 @@ class IslandTools:
         op.threshold_edges = context.scene.island_tools_prop_islands_by_threshold_edges
         op.mode_area = context.scene.island_tools_prop_islands_by_mode_area
         op.threshold_area = context.scene.island_tools_prop_islands_by_threshold_area
-        row = layout.row(align=True)
+        row = box.row(align=True)
         row.prop(
             data=context.scene,
             property='island_tools_prop_islands_by_op_mode',
             expand=True
         )
-        row = layout.row(align=True)
+        row = box.row(align=True)
         row.prop(
             data=context.scene,
             property='island_tools_prop_islands_by_compare_mode',
             expand=True
         )
-        col = layout.column(align=True)
+        col = box.column(align=True)
         row = col.row(align=True)
         row.prop(
             data=context.scene,
@@ -379,7 +472,6 @@ class IslandTools:
             property='island_tools_prop_islands_by_threshold_area',
             text='% Threshold'
         )
-
 
 # OPERATORS
 
@@ -495,6 +587,29 @@ class IslandTools_OT_decompose(Operator):
     def poll(cls, context):
         return context.active_object and context.active_object.mode == 'EDIT'
 
+class IslandTools_OT_merge_inside_islans(Operator):
+    bl_idname = 'island_tools.merge_inside_islands'
+    bl_label = 'Merge Inside Islands'
+    bl_description = 'Merge by Distance'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    distance = FloatProperty(
+        name='Merge Distance',
+        default=0.02
+    )
+
+    def execute(self, context):
+        IslandTools.merge_inside_islands(
+            op=self,
+            context=context,
+            distance=self.distance
+        )
+        return {'FINISHED'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.mode == 'EDIT'
+
 
 # PANELS
 
@@ -562,9 +677,22 @@ def register(ui=True):
         name='Decompose Offset',
         default=0.5
     )
+    Scene.island_tools_prop_ignore_hidden = BoolProperty(
+        name='Igonre hidden',
+        default=False
+    )
+    Scene.island_tools_prop_only_selected = BoolProperty(
+        name='Only Selected',
+        default=False
+    )
+    Scene.island_tools_prop_merge_distance = FloatProperty(
+        name='Merge Distance',
+        default=0.02
+    )
     register_class(IslandTools_OT_dec_select)
     register_class(IslandTools_OT_islands_by)
     register_class(IslandTools_OT_decompose)
+    register_class(IslandTools_OT_merge_inside_islans)
     if ui:
         register_class(IslandTools_PT_panel)
 
@@ -572,9 +700,13 @@ def register(ui=True):
 def unregister(ui=True):
     if ui:
         unregister_class(IslandTools_PT_panel)
+    unregister_class(IslandTools_OT_merge_inside_islans)
     unregister_class(IslandTools_OT_decompose)
     unregister_class(IslandTools_OT_islands_by)
     unregister_class(IslandTools_OT_dec_select)
+    del Scene.island_tools_prop_merge_distance
+    del Scene.island_tools_prop_only_selected
+    del Scene.island_tools_prop_ignore_hidden
     del Scene.island_tools_prop_decompose_offset
     del Scene.island_tools_prop_islands_by_threshold_area
     del Scene.island_tools_prop_islands_by_threshold_edges
